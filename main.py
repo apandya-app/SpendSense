@@ -282,13 +282,31 @@ def main(page: ft.Page):
             for name in ["Home", "Scan", "History", "Stats"]
         ], spacing=5, wrap=True, alignment=ft.MainAxisAlignment.CENTER)
         page.clean()
-        page.add(ft.SafeArea(content=ft.Column(controls=[
-            ft.Container(content=ft.Column(controls=controls, spacing=16,
-                                           scroll=ft.ScrollMode.AUTO, expand=True),
-                         padding=18, expand=True),
-            ft.Container(content=nav, bgcolor=WHITE, padding=10),
-        ], spacing=0, expand=True)))
+        page.scroll = ft.ScrollMode.AUTO
+
+        page.add(
+            ft.SafeArea(
+                content=ft.Column(
+                    controls=[
+                        ft.Container(
+                            content=ft.Column(
+                                controls=controls,
+                                spacing=16,
+                            ),
+                            padding=18,
+                        ),
+                        ft.Container(
+                            content=nav,
+                            bgcolor=WHITE,
+                            padding=10,
+                        ),
+                    ],
+                    spacing=0,
+                )
+            )
+        )
         page.update()
+
 
     render()
 
