@@ -276,13 +276,17 @@ def main(page: ft.Page):
                 ft.Button("Back to insights", on_click=lambda e: switch("Stats"),
                           bgcolor=MINT, color=DARK)]
 
-  sections = {
-    "Home": home,
-    "Scan": add_screen,
-    "Receipt": receipt_scanner,
-    "History": history,
-    "Stats": stats,
-    "Categories": categories,
+  
+    def render():
+        sections = {
+            "Home": home,
+            "Scan": add_screen,
+            "Receipt": receipt_scanner,
+            "History": history,
+            "Stats": stats,
+            "Categories": categories,
+        }
+
 }
         controls = [
             ft.Row(controls=[txt("SpendSense", 26, DARK, True),
