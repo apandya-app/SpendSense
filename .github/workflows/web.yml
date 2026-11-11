@@ -22,7 +22,10 @@ jobs:
         shell: bash
         run: |
           uv run flet build web --yes --base-url "${GITHUB_REPOSITORY#*/}" --route-url-strategy hash
-
+          
+      - name: Add receipt scanner
+        run: cp receipt-scanner.html build/web/receipt-scanner.html
+        
       - uses: actions/upload-pages-artifact@v4
         with:
           path: build/web
