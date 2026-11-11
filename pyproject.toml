@@ -8,7 +8,6 @@ dependencies = [
     "flet",
     "flet-webview"
 ]
-]
 
 [dependency-groups]
 dev = [
