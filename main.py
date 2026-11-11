@@ -276,7 +276,9 @@ def main(page: ft.Page):
                 ft.Button("Back to insights", on_click=lambda e: switch("Stats"),
                           bgcolor=MINT, color=DARK)]
 
-  
+
+    
+   
     def render():
         sections = {
             "Home": home,
@@ -286,6 +288,7 @@ def main(page: ft.Page):
             "Stats": stats,
             "Categories": categories,
         }
+
 
 }
         controls = [
