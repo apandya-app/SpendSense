@@ -3,7 +3,7 @@ import flet_webview as fwv
 from collections import defaultdict
 from datetime import date, timedelta
 
-# SpendSense - Finance Dashboard and Receipt Scanner
+# Receiptly - Finance Dashboard and Receipt Scanner
 
 BG = "#F5FAF6"
 DARK = "#14362B"
@@ -18,7 +18,7 @@ SCANNER_URL = "https://apandya-app.github.io/SpendSense/receipt-scanner.html"
 
 
 def main(page: ft.Page):
-    page.title = "SpendSense"
+    page.title = "Receiptly"
     page.bgcolor = BG
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
@@ -315,7 +315,7 @@ def main(page: ft.Page):
 
         controls = [
             ft.Row(controls=[
-                txt("SpendSense", 26, DARK, True),
+                txt("Receiptly", 26, DARK, True),
                 ft.Container(expand=True),
                 ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED, color=GREEN, size=28),
             ])
