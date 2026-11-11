@@ -16,17 +16,18 @@ CATEGORIES = ["Groceries", "Restaurants", "Transport", "Shopping", "Entertainmen
 COLORS = ["#247D55", "#49A878", "#88C5A1", "#B4DCC3", "#74A6A1", "#C8B4DB", "#A8B5AE"]
 SCANNER_URL = "https://apandya-app.github.io/SpendSense/receipt-scanner.html"
 
-
 async def main(page: ft.Page):
     page.title = "Receiptly"
     page.bgcolor = BG
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
     page.scroll = ft.ScrollMode.AUTO
-        import json
+
+    import json
     prefs = ft.SharedPreferences()
     STORAGE_KEY = "receiptly.transactions.v1"
     demo = True
+
 
     async def save_transactions():
         data = [
