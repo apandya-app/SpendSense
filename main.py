@@ -1,4 +1,5 @@
 import flet as ft
+import flet_webview as fwv
 from datetime import date, timedelta
 from collections import defaultdict
 
@@ -203,6 +204,21 @@ def main(page: ft.Page):
                   feedback),
         ]
 
+    def receipt_scanner():
+        return [
+            heading(
+                "Scan your receipt",
+                "Upload and organise your spending"
+            ),
+            ft.Container(
+                content=fwv.WebView(
+                    url="https://apandya-app.github.io/SpendSense/receipt-scanner.html",
+                    expand=True,
+                ),
+                height=650,
+            ),
+        ]
+        
     def history():
         ordered = sorted(transactions, key=lambda t: t["date"], reverse=True)
         return [heading("Transaction history", "Review or remove purchases"),
@@ -260,9 +276,14 @@ def main(page: ft.Page):
                 ft.Button("Back to insights", on_click=lambda e: switch("Stats"),
                           bgcolor=MINT, color=DARK)]
 
-    def render():
-        sections = {"Home": home, "Scan": add_screen, "History": history,
-                    "Stats": stats, "Categories": categories}
+  sections = {
+    "Home": home,
+    "Scan": add_screen,
+    "Receipt": receipt_scanner,
+    "History": history,
+    "Stats": stats,
+    "Categories": categories,
+}
         controls = [
             ft.Row(controls=[txt("SpendSense", 26, DARK, True),
                              ft.Container(expand=True),
@@ -279,7 +300,7 @@ def main(page: ft.Page):
             ft.Button(name, on_click=lambda e, x=name: switch(x),
                       bgcolor=GREEN if screen == name else WHITE,
                       color=WHITE if screen == name else DARK)
-            for name in ["Home", "Scan", "History", "Stats"]
+            for name in ["Home", "Receipt", "History", "Stats"]
         ], spacing=5, wrap=True, alignment=ft.MainAxisAlignment.CENTER)
         page.clean()
         page.scroll = ft.ScrollMode.ALWAYS
