@@ -282,8 +282,7 @@ def main(page: ft.Page):
             for name in ["Home", "Scan", "History", "Stats"]
         ], spacing=5, wrap=True, alignment=ft.MainAxisAlignment.CENTER)
         page.clean()
-        page.scroll = ft.ScrollMode.AUTO
-
+        page.scroll = ft.ScrollMode.ALWAYS
         page.add(
             ft.SafeArea(
                 content=ft.Column(
