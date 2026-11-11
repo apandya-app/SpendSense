@@ -378,7 +378,8 @@ async def main(page: ft.Page):
         ], spacing=0)))
         page.update()
 
-    render()
+        await load_transactions()
+        render()
 
 
 if __name__ == "__main__":
