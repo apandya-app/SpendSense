@@ -106,7 +106,7 @@ async def main(page: ft.Page):
         period = name
         render()
 
-    def clear_sample(e):
+    async def clear_sample(e):
         nonlocal demo
         if demo:
             transactions.clear()
