@@ -15,7 +15,7 @@ dev = [
 ]
 
 [tool.flet]
-product = "SpendSense"
+product = "Receiptly"
 
 [tool.flet.app]
 module = "main"
