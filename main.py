@@ -203,6 +203,8 @@ async def main(page: ft.Page):
                               bgcolor=WHITE, color=GREEN),
                     ft.Button("Add manually", on_click=lambda e: switch("Scan"),
                               bgcolor=MINT, color=DARK),
+                    ft.Button("My receipts", on_click=lambda e: switch("Library"),
+                              bgcolor=WHITE, color=GREEN),
                 ], wrap=True),
                 color=GREEN,
             ),
@@ -281,13 +283,28 @@ async def main(page: ft.Page):
     def receipt_scanner():
         return [
             heading("Scan your receipt", "Upload an image and check the extracted details"),
-            txt("The scanner is embedded here. Scanned records do not yet sync with "
-                "the main dashboard.", 12, MUTED),
+            txt("Scanned records are saved in the scanner on this device, separately "
+                "from your main dashboard.", 12, MUTED),
+            ft.Button("My saved receipts", on_click=lambda e: switch("Library"),
+                      bgcolor=MINT, color=DARK),
             ft.Container(
                 content=fwv.WebView(url=SCANNER_URL, expand=True),
                 height=650, bgcolor=WHITE, border_radius=12,
             ),
             ft.Button("Enter a transaction manually", on_click=lambda e: switch("Scan"),
+                      bgcolor=MINT, color=DARK),
+        ]
+
+    def receipt_library():
+        return [
+            heading("My receipt library", "Browse your saved receipt photos by category"),
+            txt("Photos are saved on this device, separately from your main dashboard.",
+                12, MUTED),
+            ft.Container(
+                content=fwv.WebView(url=SCANNER_URL + "#receipt-library", expand=True),
+                height=700, bgcolor=WHITE, border_radius=12,
+            ),
+            ft.Button("Scan another receipt", on_click=lambda e: switch("Receipt"),
                       bgcolor=MINT, color=DARK),
         ]
 
@@ -358,6 +375,8 @@ async def main(page: ft.Page):
             heading("Categories", "Understand your spending habits"),
             period_buttons(),
             panel(*category_bars(rows)),
+            ft.Button("View saved receipt photos", on_click=lambda e: switch("Library"),
+                      bgcolor=MINT, color=DARK),
             ft.Button("Back to insights", on_click=lambda e: switch("Stats"),
                       bgcolor=MINT, color=DARK),
         ]
@@ -367,6 +386,7 @@ async def main(page: ft.Page):
             "Home": home,
             "Scan": add_screen,
             "Receipt": receipt_scanner,
+            "Library": receipt_library,
             "History": history,
             "Stats": stats,
             "Categories": categories,

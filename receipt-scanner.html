@@ -12,11 +12,39 @@ label.upload-zone:hover{background:#e8f7ee;border-color:#207b51}#photo:focus-vis
 .upload-zone strong{font-size:18px;color:#14362b}.upload-zone .muted{font-size:13px;font-weight:400}
 .choose-file{display:inline-block;background:#207b51;color:white;border-radius:10px;padding:11px 22px;font-size:14px;font-weight:600;margin-top:2px}
 .file-name{margin:8px 0 0;font-size:13px;color:#207b51;overflow-wrap:anywhere}
+
+.library-link{display:inline-block;margin-top:12px;color:#207b51;text-decoration:none;font-weight:700;font-size:14px;padding:9px 4px}
+.library-link:hover{text-decoration:underline}
+.library-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.library-heading h2{margin-bottom:0}
+.count{background:#ddf2e5;border-radius:999px;color:#14362b;padding:5px 11px;font-size:12px;font-weight:700}
+.note{font-size:12px;line-height:1.5}
+.category-heading{display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px}
+.category-heading h3{margin:0;font-size:16px}
+.receipt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:12px}
+.receipt-tile{width:100%;margin:0;border:1px solid #dae9df;background:#f9fcfa;border-radius:14px;padding:10px;text-align:left;color:#14362b;cursor:pointer;overflow:hidden}
+.receipt-tile:hover{border-color:#207b51;background:#f0f8f2}
+.receipt-tile img{width:100%;height:120px;object-fit:cover;border-radius:9px;background:#eef4ef;display:block;margin-bottom:9px}
+.receipt-tile strong{display:block;overflow-wrap:anywhere;font-size:14px}
+.receipt-tile .muted{display:block;font-size:12px;margin-top:4px}
+.photo-viewer{position:fixed;z-index:1000;inset:0;background:rgba(13,36,27,.75);display:flex;align-items:center;justify-content:center;padding:12px}
+.photo-viewer[hidden],.delete-prompt[hidden]{display:none}
+.viewer-panel{background:white;border-radius:16px;max-width:700px;width:100%;max-height:95vh;overflow:auto;padding:18px}
+.viewer-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.viewer-head button{margin:0}
+#viewer-image{max-width:100%;width:100%;height:auto;max-height:65vh;object-fit:contain;border-radius:9px;background:#f5faf6}
+.viewer-actions{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+button.danger-outline{background:white;color:#b42323;border:1px solid #b42323}
+button.danger{background:#b42323;color:white}
+.delete-prompt{background:#fff4f4;border-radius:12px;padding:12px;margin-top:10px}
+body.library-mode #scan-section,body.library-mode #review,body.library-mode #saved-spending{display:none!important}
+body.library-mode .back-to-scan{display:inline-block}
+.back-to-scan{display:none}
 </style>
 </head>
 <body><main>
-<h1>Receiptly</h1><small>Snap. Track. Save. — Receipt scanner demo</small>
-<section class="card">
+<h1>Receiptly</h1><small>Snap. Track. Save. — Your receipt scanner</small>
+<section class="card" id="scan-section">
 <h2>Scan a receipt</h2>
 <p class="muted">Got a receipt? Just upload it here, and we’ll help you sort out the details — nice and easy.</p>
 <input id="photo" class="file-input" type="file" accept="image/*">
@@ -28,7 +56,7 @@ label.upload-zone:hover{background:#e8f7ee;border-color:#207b51}#photo:focus-vis
 </label>
 <p id="selected-file" class="file-name" aria-live="polite"></p>
 <img id="preview" alt="Selected receipt preview">
-<button id="scan">Read receipt</button>
+<button id="scan">Read receipt</button> <a class="library-link" href="#receipt-library">My saved receipts</a>
 <p id="status" role="status">Choose an image to begin.</p>
 </section>
 <section class="card" id="review">
@@ -38,10 +66,37 @@ label.upload-zone:hover{background:#e8f7ee;border-color:#207b51}#photo:focus-vis
 <label>Total (£)<input id="amount" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
 <label>Date<input id="date" type="date"></label>
 <label>Category<select id="category"><option>Groceries</option><option>Restaurants</option><option>Transport</option><option>Shopping</option><option>Entertainment</option><option>Healthcare</option><option>Other</option></select></label>
-<button id="save">Save transaction</button>
+<button id="save">Save receipt &amp; transaction</button>
+<p class="muted" style="font-size:13px">Your receipt photo will be saved in the category you choose.</p>
 <details><summary>See recognised text</summary><pre id="raw" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
 </section>
-<section class="card"><h2>Saved spending <span id="sum">£0.00</span></h2><p class="muted">Saved on this browser only. These transactions are separate from the main Flet dashboard.</p><div id="history"></div><button class="secondary" id="clear">Clear saved transactions</button></section>
+<section class="card" id="saved-spending">
+<h2>Saved scanner spending <span id="sum">£0.00</span></h2>
+<p class="muted">These records are saved on this device, separately from your main Receiptly dashboard.</p>
+<div id="history"></div><button class="secondary" id="clear">Clear older transactions without photos</button>
+</section>
+<section class="card" id="receipt-library">
+<div class="library-heading"><h2>My receipt library</h2><span id="receipt-count" class="count">0 receipts</span></div>
+<p class="muted">Your receipt photos, neatly organised by category. Tap one to see the full image.</p>
+<p class="muted note">Saved on this device only. Clearing site data or uninstalling the app may erase these photos, so keep backups of anything important.</p>
+<a href="#scan-section" class="library-link back-to-scan">Scan another receipt</a>
+<label for="library-filter">Browse by category</label>
+<select id="library-filter"><option value="All categories">All categories</option>
+<option>Groceries</option><option>Restaurants</option><option>Transport</option>
+<option>Shopping</option><option>Entertainment</option><option>Healthcare</option><option>Other</option></select>
+<p id="library-status" class="muted" role="status">Loading saved receipts...</p>
+<div id="receipt-groups"></div>
+</section>
+<div id="photo-viewer" class="photo-viewer" role="dialog" aria-modal="true" aria-label="Saved receipt" hidden>
+<div class="viewer-panel">
+<div class="viewer-head"><strong id="viewer-title">Saved receipt</strong><button id="close-photo" class="secondary" type="button">Close</button></div>
+<p id="viewer-meta" class="muted"></p>
+<img id="viewer-image" alt="Saved receipt photo">
+<div class="viewer-actions"><a id="download-photo" class="library-link" download="receipt.jpg">Download photo</a><button id="delete-photo" class="danger-outline" type="button">Delete receipt</button></div>
+<div id="delete-prompt" class="delete-prompt" hidden><p>Delete this photo and its scanner transaction? This cannot be undone.</p>
+<button id="cancel-delete" class="secondary" type="button">Cancel</button>
+<button id="confirm-delete" class="danger" type="button">Yes, delete</button>
+</div></div></div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -100,22 +155,182 @@ $('scan').onclick=async()=>{
  }catch(err){$('status').textContent='Could not read receipt: '+err.message;}
  finally{if(worker)await worker.terminate();$('scan').disabled=false;}
 };
-$('save').onclick=()=>{
- const merchant=$('merchant').value.trim(),amount=Number($('amount').value),date=$('date').value,category=$('category').value;
- if(!merchant||!Number.isFinite(amount)||amount<=0||!date){alert('Please check merchant, positive total, and date.');return;}
- rows.unshift({merchant,amount:Math.round(amount*100)/100,date,category});
- localStorage.setItem(key,JSON.stringify(rows));render();$('status').textContent='Transaction saved in this browser.';
-};
-function render(){
- $('sum').textContent='£'+rows.reduce((s,r)=>s+Number(r.amount||0),0).toFixed(2);
- $('history').replaceChildren();
- if(!rows.length){$('history').textContent='No saved transactions yet.';return;}
- rows.forEach(r=>{const line=document.createElement('div');line.className='line';
- const left=document.createElement('div');const name=document.createElement('strong');name.textContent=r.merchant;
- const meta=document.createElement('div');meta.className='muted';meta.textContent=r.category+' • '+r.date;
- left.append(name,meta);const right=document.createElement('span');right.textContent='£'+Number(r.amount).toFixed(2);
- line.append(left,right);$('history').append(line);});
+// A separate image library: IndexedDB stores the photo and its transaction in one record.
+// Older text-only scanner transactions stay in localStorage and remain readable.
+const DB_NAME = 'receiptly_receipt_library_v1';
+const DB_STORE = 'receipts';
+const CATEGORIES = ['Groceries','Restaurants','Transport','Shopping','Entertainment','Healthcare','Other'];
+let libraryRecords = [];
+let thumbUrls = [];
+let viewerUrl = null;
+let activePhotoId = null;
+let databasePromise = null;
+
+function openLibrary() {
+ if (!window.indexedDB) return Promise.reject(new Error('Photo storage is not supported in this browser.'));
+ if (databasePromise) return databasePromise;
+ databasePromise = new Promise((resolve,reject)=>{
+  const req = indexedDB.open(DB_NAME,1);
+  req.onupgradeneeded=()=>{
+   const db=req.result;
+   if(!db.objectStoreNames.contains(DB_STORE))db.createObjectStore(DB_STORE,{keyPath:'id'});
+  };
+  req.onsuccess=()=>resolve(req.result);
+  req.onerror=()=>reject(req.error||new Error('Cannot open receipt storage.'));
+  req.onblocked=()=>reject(new Error('Receipt storage is busy in another tab. Close other Receiptly tabs and retry.'));
+ }).catch(err=>{databasePromise=null;throw err;});
+ return databasePromise;
 }
-$('clear').onclick=()=>{if(confirm('Delete all saved scanner transactions from this browser?')){rows=[];localStorage.removeItem(key);render();}};
-render();
+async function libraryOperation(mode,makeRequest) {
+ const db=await openLibrary();
+ return new Promise((resolve,reject)=>{
+  const tx=db.transaction(DB_STORE,mode);
+  let request;
+  try{request=makeRequest(tx.objectStore(DB_STORE));}
+  catch(err){tx.abort();reject(err);return;}
+  tx.oncomplete=()=>resolve(request && request.result);
+  tx.onerror=()=>reject(tx.error||new Error('Could not access saved receipts.'));
+  tx.onabort=()=>reject(tx.error||new Error('Receipt save was cancelled.'));
+ });
+}
+function renderHistory(){
+ const all=[...libraryRecords.map(r=>({...r,hasPhoto:true})),...rows.map(r=>({...r,hasPhoto:false}))];
+ all.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+ $('sum').textContent='£'+all.reduce((s,r)=>s+Number(r.amount||0),0).toFixed(2);
+ $('history').replaceChildren();
+ if(!all.length){$('history').textContent='No saved transactions yet.';}
+ all.forEach(r=>{
+  const line=document.createElement('div');line.className='line';
+  const left=document.createElement('div');
+  const name=document.createElement('strong');name.textContent=r.merchant||'Unknown shop';
+  const meta=document.createElement('div');meta.className='muted';
+  meta.textContent=r.category+' • '+r.date+(r.hasPhoto?' • Photo saved':'');
+  left.append(name,meta);
+  const right=document.createElement('span');right.textContent='£'+Number(r.amount).toFixed(2);
+  line.append(left,right);$('history').append(line);
+ });
+ $('clear').hidden=rows.length===0;
+}
+function renderLibrary(){
+ thumbUrls.forEach(url=>URL.revokeObjectURL(url));
+ thumbUrls=[];
+ $('receipt-count').textContent=libraryRecords.length+' '+(libraryRecords.length===1?'receipt':'receipts');
+ const holder=$('receipt-groups');holder.replaceChildren();
+ const selected=$('library-filter').value;
+ const categories=selected==='All categories'?CATEGORIES:[selected];
+ let shown=0;
+ for(const category of categories){
+  const entries=libraryRecords.filter(r=>r.category===category);
+  if(!entries.length)continue;
+  shown+=entries.length;
+  const heading=document.createElement('div');heading.className='category-heading';
+  const name=document.createElement('h3');name.textContent=category;
+  const count=document.createElement('span');count.className='muted';count.textContent=entries.length+' saved';
+  heading.append(name,count);holder.append(heading);
+  const grid=document.createElement('div');grid.className='receipt-grid';
+  entries.forEach(receipt=>{
+   const tile=document.createElement('button');tile.className='receipt-tile';tile.type='button';
+   const img=document.createElement('img');img.alt='Photo of receipt from '+receipt.merchant;
+   const url=URL.createObjectURL(receipt.photo);thumbUrls.push(url);img.src=url;
+   const merchant=document.createElement('strong');merchant.textContent=receipt.merchant;
+   const detail=document.createElement('span');detail.className='muted';
+   detail.textContent=receipt.date+' · £'+Number(receipt.amount).toFixed(2);
+   tile.append(img,merchant,detail);
+   tile.addEventListener('click',()=>openPhoto(receipt.id));
+   grid.append(tile);
+  });
+  holder.append(grid);
+ }
+ $('library-status').textContent=shown?'':'No receipt photos saved in this category yet.';
+}
+function closePhoto(){
+ $('photo-viewer').hidden=true;
+ $('delete-prompt').hidden=true;
+ activePhotoId=null;
+ $('viewer-image').removeAttribute('src');
+ $('download-photo').removeAttribute('href');
+ if(viewerUrl){URL.revokeObjectURL(viewerUrl);viewerUrl=null;}
+}
+function openPhoto(id){
+ const receipt=libraryRecords.find(r=>r.id===id);
+ if(!receipt)return;
+ closePhoto();
+ activePhotoId=id;
+ viewerUrl=URL.createObjectURL(receipt.photo);
+ $('viewer-title').textContent=receipt.merchant;
+ $('viewer-meta').textContent=receipt.category+' · '+receipt.date+' · £'+Number(receipt.amount).toFixed(2);
+ $('viewer-image').src=viewerUrl;
+ $('download-photo').href=viewerUrl;
+ $('download-photo').download='receipt-'+receipt.date+'.'+(receipt.photo.type==='image/png'?'png':'jpg');
+ $('photo-viewer').hidden=false;
+ $('close-photo').focus();
+}
+async function refreshLibrary(){
+ libraryRecords=await libraryOperation('readonly',store=>store.getAll());
+ libraryRecords.sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
+ renderHistory();
+ renderLibrary();
+}
+$('library-filter').addEventListener('change',renderLibrary);
+$('close-photo').onclick=closePhoto;
+$('photo-viewer').addEventListener('click',e=>{if(e.target===$('photo-viewer'))closePhoto();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('photo-viewer').hidden)closePhoto();});
+$('delete-photo').onclick=()=>{$('delete-prompt').hidden=false;};
+$('cancel-delete').onclick=()=>{$('delete-prompt').hidden=true;};
+$('confirm-delete').onclick=async()=>{
+ if(!activePhotoId)return;
+ $('confirm-delete').disabled=true;
+ try{
+  await libraryOperation('readwrite',store=>store.delete(activePhotoId));
+  closePhoto();
+  await refreshLibrary();
+  $('library-status').textContent='Receipt removed from this device.';
+ }catch(err){$('library-status').textContent='Could not delete receipt: '+err.message;closePhoto();}
+ finally{$('confirm-delete').disabled=false;}
+};
+$('save').onclick=async()=>{
+ const file=$('photo').files[0];
+ const merchant=$('merchant').value.trim(),amount=Number($('amount').value),date=$('date').value,category=$('category').value;
+ if(!file||!file.type.startsWith('image/')){$('status').textContent='Please select a receipt photo first.';return;}
+ if(file.size>15*1024*1024){$('status').textContent='That photo is over 15 MB. Please choose a smaller image.';return;}
+ if(!merchant||!Number.isFinite(amount)||amount<=0||!date||!CATEGORIES.includes(category)){
+  $('status').textContent='Please check the shop, positive amount, date and category.';return;
+ }
+ $('save').disabled=true;$('status').textContent='Saving your receipt photo...';
+ const record={
+  id:window.crypto&&crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random().toString(36).slice(2),
+  merchant,amount:Math.round(amount*100)/100,date,category,
+  photo:file,savedAt:new Date().toISOString()
+ };
+ try{
+  await libraryOperation('readwrite',store=>store.put(record));
+  await refreshLibrary();
+  $('status').textContent='All saved! Your photo is in My receipt library under '+category+'.';
+  $('review').style.display='none';
+  $('photo').value='';$('selected-file').textContent='';
+  if(imgUrl){URL.revokeObjectURL(imgUrl);imgUrl=null;}
+  $('preview').removeAttribute('src');$('preview').style.display='none';
+ }catch(err){
+  $('save').disabled=false;
+  $('status').textContent='Could not save this receipt. Please try again: '+err.message;
+ }
+};
+$('clear').onclick=()=>{
+ if(confirm('Remove older scanner transactions without photos? Your photo library will not be affected.')){
+  try{localStorage.removeItem(key);rows=[];renderHistory();}
+  catch(err){$('library-status').textContent='Could not clear older transactions: '+err.message;}
+ }
+};
+function setScreenMode(){
+ const justLibrary=location.hash==='#receipt-library';
+ document.body.classList.toggle('library-mode',justLibrary);
+ if(justLibrary)window.scrollTo(0,0);
+}
+window.addEventListener('hashchange',setScreenMode);
+setScreenMode();
+renderHistory();
+refreshLibrary().catch(err=>{
+ $('library-status').textContent='Receipt photo storage is unavailable here: '+err.message;
+ $('save').disabled=true;
+});
 </script></body></html>
