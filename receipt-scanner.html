@@ -113,14 +113,53 @@ $('photo').addEventListener('change',()=>{
  imgUrl=URL.createObjectURL(file);$('preview').src=imgUrl;$('preview').style.display='block';
  $('status').textContent='Image selected. Click Read receipt.';
 });
-function categoryFor(text){const t=text.toLowerCase();
- if(/tesco|sainsbury|asda|aldi|lidl|waitrose|morrisons|co.op/.test(t))return 'Groceries';
- if(/cafe|coffee|restaurant|mcdonald|kfc|subway|pizza|greggs|pret/.test(t))return 'Restaurants';
- if(/uber|train|rail|bus|tfl|transport|station|ticket/.test(t))return 'Transport';
- if(/cinema|odeon|vue|theatre|movie/.test(t))return 'Entertainment';
- if(/boots|pharmacy|chemist|health/.test(t))return 'Healthcare';
- if(/primark|zara|h&m|amazon|shop/.test(t))return 'Shopping';
- return 'Other';
+function categoryFor(merchant, receiptText) {
+ // Consider both the shop name and the products actually purchased.
+ // These rules work offline after OCR and require no paid service.
+ const lines=String(receiptText||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+ const shopContext=[String(merchant||''),...lines.slice(0,5)].join(' ');
+ const itemLines=lines.slice(1).filter(s=>
+   /[a-z]{2}/i.test(s) &&
+   !/\b(?:sub\s*total|grand\s*total|total|vat|tax|change|cash|card|debit|credit|balance|tendered|discount|savings|approved|payment|thank you|receipt number|invoice|telephone|customer|transaction id)\b/i.test(s) &&
+   !/^\s*(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|[\d.\s£]+)\s*$/.test(s)
+ ).slice(0,100);
+
+ const rules={
+   'Groceries':{
+     shop:/\b(?:tesco|sainsbury'?s?|asda|aldi|lidl|waitrose|morrisons?|supermarket|grocer(?:y|ies)|whole\s*foods|trader\s*joe'?s?|co[\s-]?op)\b/i,
+     item:/\b(?:milk|bread|eggs?|bananas?|apples?|oranges?|tomatoes?|potatoes?|cheese|yoghur?t|rice|pasta|cereal|vegetables?|fruit|lettuce|flour|sugar|oats|butter)\b/i
+   },
+   'Restaurants':{
+     shop:/\b(?:cafe|café|coffee\s*shop|starbucks|costa|pret|greggs|mcdonald'?s?|kfc|subway|pizza\s*(?:hut|express)|restaurant|diner|bakery|bistro|eatery|takeaway)\b/i,
+     item:/\b(?:espresso|latte|cappuccino|americano|flat\s*white|mocha|coffee|tea|burger|fries|pizza|sandwich|meal|combo|sushi|ramen|tacos?|burrito|breakfast|dinner|lunch)\b/i
+   },
+   'Transport':{
+     shop:/\b(?:uber|lyft|tfl|transport\s*for\s*london|national\s*rail|trainline|railway|bus\s*station|tube|parking|petrol\s*station)\b/i,
+     item:/\b(?:train\s*ticket|bus\s*ticket|rail\s*fare|metro\s*fare|taxi\s*fare|parking|petrol|diesel|fuel|oyster|travelcard|transit\s*fare|journey)\b/i
+   },
+   'Shopping':{
+     shop:/\b(?:g[il1]ft[\s-]*sh[o0]p|souvenir[\s-]*(?:shop|store)|book[\s-]?(?:shop|store)|campus[\s-]*(?:shop|store)|university[\s-]*(?:shop|store)|museum[\s-]*(?:shop|store)|merch(?:andise)?[\s-]*(?:shop|store)|clothing[\s-]*(?:shop|store)|harvard(?:\s+university)?\s+(?:shop|store|co[\s-]?op)|amazon|primark|zara|uniqlo|ikea|h\s*&\s*m)\b/i,
+     item:/\b(?:souvenirs?|gifts?|hoodies?|sweatshirts?|t[\s-]?shirts?|shirts?|mugs?|key[\s-]?chains?|magnets?|postcards?|stickers?|tote(?:\s+bags?)?|caps?|hats?|notebooks?|pens?|pencils?|stationery|merch(?:andise)?|apparel|clothing|books?|sweaters?|jerseys?|plush(?:ie|ies)?|toys?|phone\s*cases?|chargers?|headphones|jackets?|socks?|scarves?)\b/i
+   },
+   'Entertainment':{
+     shop:/\b(?:cinema|odeon|vue\s*cinema|theat(?:re|er)|netflix|spotify|disney\s*\+|concert\s*hall|arcade|steam\s*games)\b/i,
+     item:/\b(?:cinema\s*ticket|movie\s*ticket|concert|movie|theat(?:re|er)|museum\s*admission|admission|arcade|video\s*game|game\s*pass|subscription|streaming)\b/i
+   },
+   'Healthcare':{
+     shop:/\b(?:pharmacy|chemist|boots\s*pharmacy|hospital|clinic|dentist|medical\s*centre|cvs\s*pharmacy|walgreens)\b/i,
+     item:/\b(?:paracetamol|ibuprofen|medication|medicine|prescription|bandages?|first\s*aid|antiseptic|vitamins?|pain\s*relief|dental\s*floss)\b/i
+   }
+ };
+ let best='Other',bestScore=0;
+ for(const [category,rule] of Object.entries(rules)){
+   let score=rule.shop.test(shopContext)?7:0;
+   // Multiple product lines can outweigh a merchant's general business type.
+   let hits=0;
+   for(const line of itemLines)if(rule.item.test(line))hits++;
+   score+=3*Math.min(hits,7);
+   if(score>bestScore){bestScore=score;best=category;}
+ }
+ return best;
 }
 function parseReceipt(text){
  const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
@@ -137,7 +176,7 @@ function parseReceipt(text){
  let iso=new Date().toLocaleDateString('en-CA');
  const match=text.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/);
  if(match){let y=Number(match[3]);if(y<100)y+=2000;const d=Number(match[1]),m=Number(match[2]);const dt=new Date(y,m-1,d);if(dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===d)iso=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
- return {merchant,amount,date:iso,category:categoryFor(merchant+' '+text.slice(0,500))};
+ return {merchant,amount,date:iso,category:categoryFor(merchant,text)};
 }
 $('scan').onclick=async()=>{
  const file=$('photo').files[0];if(!file){$('status').textContent='Select a receipt image first.';return;}
