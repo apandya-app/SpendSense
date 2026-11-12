@@ -67,6 +67,7 @@ body.library-mode .back-to-scan{display:inline-block}
 <label>Date<input id="date" type="date"></label>
 <label>Category<select id="category"><option>Groceries</option><option>Restaurants</option><option>Transport</option><option>Shopping</option><option>Entertainment</option><option>Healthcare</option><option>Other</option></select></label>
 <p class="muted note" id="merchant-note" aria-live="polite"></p>
+<p class="warning" id="scan-warnings" role="status"></p>
 <button id="save">Save receipt &amp; transaction</button>
 <p class="muted" style="font-size:13px">Your receipt photo will be saved in the category you choose.</p>
 <details><summary>See recognised text</summary><pre id="raw" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
@@ -175,41 +176,65 @@ function isNonMerchantLine(input){
  if(/\b(?:total|subtotal|invoice|transaction|cash|debit|credit|card|item count)\b/i.test(s))return true;
  return false;
 }
-function detectedMerchant(text,ocrData){
- const plain=String(text||'').split(/\r?\n/).map(name=>name.trim()).filter(Boolean);
- const boxes=[];
- for(const block of (ocrData&&Array.isArray(ocrData.blocks)?ocrData.blocks:[])){
-  for(const paragraph of (block.paragraphs||[])){
-   for(const line of (paragraph.lines||[])){
-    const name=String(line.text||(line.words||[]).map(w=>w.text||'').join(' ')).trim();
-    const bb=line.bbox||{};
-    if(name)boxes.push({name,top:Number.isFinite(bb.y0)?bb.y0:null,bottom:Number.isFinite(bb.y1)?bb.y1:null});
+
+function detectedMerchant(text, ocrData, headerData) {
+ // Compare the top, enlarged header against the full OCR result. Text size is
+ // an indicator of the brand name, not an absolute guarantee of correctness.
+ const candidates=[];
+ const brandWords=/\b(?:g[il1]ft[\s-]*sh[o0]p|souvenir|campus[\s-]*store|store|shop|bookstore|market|pharmacy|cafe|café|coffee|restaurant|supermarket|grocer|retail|boutique|museum[\s-]*store)\b/i;
+ const labelOnly=/^(?:gift[\s-]*sh[o0]p|souvenir[\s-]*shop|campus[\s-]*store|bookstore|university[\s-]*shop|merch(?:andise)?[\s-]*shop)$/i;
+ const wordLines=(text,data)=>{
+   let found=[];
+   for(const block of ((data&&Array.isArray(data.blocks))?data.blocks:[])){
+     for(const paragraph of (block.paragraphs||[])){
+       for(const line of (paragraph.lines||[])){
+         const name=String(line.text||(line.words||[]).map(w=>w.text||'').join(' ')).trim();
+         const bbox=line.bbox||{};
+         if(name)found.push({name,top:Number.isFinite(bbox.y0)?bbox.y0:null,
+           height:Number.isFinite(bbox.y1)&&Number.isFinite(bbox.y0)?bbox.y1-bbox.y0:0});
+       }
+     }
    }
-  }
+   if(found.length>1&&found.every(x=>x.top!==null))found.sort((a,b)=>a.top-b.top);
+   return found.length?found:String(text||'').split(/\r?\n/).map(name=>({name:name.trim(),top:null,height:0})).filter(x=>x.name);
+ };
+ for(const set of [
+   {text:headerData&&headerData.text, data:headerData, extra:5},
+   {text, data:ocrData, extra:1}
+ ]){
+   const entries=wordLines(set.text,set.data);
+   const heights=entries.map(x=>x.height).filter(x=>x>0).sort((a,b)=>a-b);
+   const median=heights.length?heights[Math.floor(heights.length/2)]:0;
+   // A brand may be split across two rows: "HARVARD" then "GIFT SHOP".
+   const expanded=[];
+   for(let i=0;i<Math.min(18,entries.length);i++){
+     expanded.push({...entries[i],index:i});
+     if(i>0&&i<10&&labelOnly.test(entries[i].name.trim())&&
+        !isNonMerchantLine(entries[i-1].name)&&entries[i-1].name.trim().length<=40){
+       expanded.push({
+         name:entries[i-1].name.trim()+' '+entries[i].name.trim(),
+         index:i-1, height:Math.max(entries[i-1].height,entries[i].height)
+       });
+     }
+   }
+   for(const entry of expanded){
+     const name=entry.name.replace(/^(?:welcome to|thank you for shopping at)\s+/i,'').trim();
+     if(isNonMerchantLine(name)||/[$£€]\s*\d/.test(name)||
+        /(?:\d{1,6}[.,]\d{2})\s*$/.test(name))continue;
+     let score=12+set.extra-entry.index*1.35;
+     if(brandWords.test(name))score+=7;
+     if(name.split(/\s+/).length>=2)score+=1.5;
+     if(median&&entry.height)score+=Math.max(-2,Math.min(7,(entry.height/median-1)*5));
+     if(name.length>48)score-=4;
+     if(/\d/.test(name))score-=3;
+     if(/^(?:harvard|university|college|school)$/i.test(name))score-=2;
+     candidates.push({name,score});
+   }
  }
- if(boxes.length>1 && boxes.every(x=>x.top!==null))boxes.sort((a,b)=>a.top-b.top);
- const lines=boxes.length?boxes:plain.map(name=>({name,top:null,bottom:null}));
- const heights=lines.filter(x=>x.top!==null&&x.bottom>x.top).map(x=>x.bottom-x.top).sort((a,b)=>a-b);
- const typical=heights.length?heights[Math.floor(heights.length/2)]:0;
- let best=null;
- lines.slice(0,Math.min(16,lines.length)).forEach((line,i)=>{
-  const name=line.name.replace(/^(?:welcome to|thank you for shopping at)\s+/i,'').trim();
-  if(isNonMerchantLine(name))return;
-  let score=10-i*.9;
-  if(name.split(/\s+/).length>=2)score++;
-  if(/\b(?:gift[\s-]*sh[o0]p|souvenir|store|shop|supermarket|grocer|cafe|coffee|restaurant|pharmacy|bookstore|boutique|market)\b/i.test(name))score+=6;
-  if(typical&&line.top!==null&&line.bottom>line.top)score+=Math.max(-2,Math.min(5,((line.bottom-line.top)/typical-1)*5));
-  if(name.length>52)score-=4;
-  if(/\d/.test(name))score-=2;
-  if(!best||score>best.score)best={name,score,index:i};
- });
- if(!best)return '';
- if(/^(?:gift[\s-]*sh[o0]p|souvenir shop|bookstore|campus store)$/i.test(best.name)&&best.index>0){
-  const preceding=lines[best.index-1].name.trim();
-  if(!isNonMerchantLine(preceding)&&preceding.length<=35)return preceding+' '+best.name;
- }
- return best.name;
+ candidates.sort((a,b)=>b.score-a.score);
+ return candidates.length&&candidates[0].score>=7?candidates[0].name:'';
 }
+
 async function researchMerchantCategory(merchant){
  // Query by business name only; never transmit receipt photo or item list.
  const name=String(merchant||'').replace(/\s+/g,' ').trim();
@@ -241,45 +266,170 @@ async function researchMerchantCategory(merchant){
  finally{clearTimeout(timer);}
  return null;
 }
-function parseReceipt(text,ocrData){
- const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
- const merchant=detectedMerchant(text,ocrData);
- const money=/(?:£\s*)?(\d{1,6}[.,]\d{2})\b/g;
- const high=[],fallback=[];
- for(const line of lines){
-   const amounts=[...line.matchAll(money)].map(m=>Number(m[1].replace(',','.'))).filter(n=>n>0);
-   if(!amounts.length)continue;
-   if(/\b(grand total|amount due|balance due|total due|total paid|total)\b/i.test(line) && !/subtotal|sub total|total vat|total tax|total savings/i.test(line))high.push(amounts[amounts.length-1]);
-   else if(!/change|cash tendered|card number|subtotal|vat|tax|discount|savings/i.test(line))fallback.push(...amounts);
+
+function parseAmountLine(line) {
+ const matches=String(line||'').match(/[$£€]?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d{1,7})[.,]\d{2}(?!\d)/g)||[];
+ return matches.map(x=>{
+   let s=x.replace(/[$£€\s]/g,'');
+   if(s.includes('.')&&s.includes(','))s=s.replace(/,/g,'');
+   else if((s.match(/,/g)||[]).length>1)s=s.replace(/,/g,'');
+   else if(s.includes(','))s=s.replace(',','.');
+   const value=Number(s);
+   return Number.isFinite(value)&&value>0&&value<10000000?value:null;
+ }).filter(x=>x!==null);
+}
+function receiptAmount(lines) {
+ const options=[];
+ for(let i=0;i<lines.length;i++){
+   const line=lines[i],v=parseAmountLine(line);
+   const normalized=line.toUpperCase().replace(/0/g,'O').replace(/1/g,'I');
+   if(/\b(?:SUB[\s-]*TOTAL|TOTAL\s+(?:ITEMS?|QUANTITY|QTY|VAT|TAX|SAVINGS|DISCOUNTS?|POINTS)|NUMBER\s+OF\s+ITEMS|TOTAL\s+COUNT|TAX\s+TOTAL|TOTAL\s+TAX)\b/.test(normalized))continue;
+   if(/\b(?:CHANGE|TENDERED|CASH GIVEN|CASH RECEIVED|CARD NUMBER|CARD ENDING|AUTH|VAT|TAX RATE|REWARD|LOYALTY|DISCOUNT|REFUND)\b/.test(normalized)&&
+      !/\b(?:AMOUNT\s+DUE|BALANCE\s+DUE|GRAND\s+TOTAL)\b/.test(normalized))continue;
+   let weight=0;
+   if(/\b(?:GRAND\s*TOTAL|AMOUNT\s*DUE|BALANCE\s*DUE|TOTAL\s*DUE|TOTAL\s*PAID|AMOUNT\s*PAID|SALE\s*TOTAL|TOTAL\s*AMOUNT)\b/.test(normalized))weight=120;
+   else if(/^\s*(?:TOTAL|TOTA[I L]|TOTAL\s*[:=])\b/.test(normalized))weight=105;
+   else if(/\bTOTAL\b/.test(normalized))weight=92;
+   else if(/\b(?:CARD\s*PAYMENT|CARD\s*CHARGED|PAID)\b/.test(normalized))weight=60;
+   if(weight&&v.length)options.push({amount:v[v.length-1],score:weight,index:i});
+   // TOTAL on one row and price on the next
+   if(weight>=90&&!v.length&&i+1<lines.length){
+     const next=parseAmountLine(lines[i+1]);
+     if(next.length===1)options.push({amount:next[0],score:weight-5,index:i+1});
+   }
+   // Loose fallback is only safe when exactly one viable price exists.
+   if(!weight&&v.length&&!/\b(?:PHONE|DATE|TIME|POSTCODE|ADDRESS)\b/i.test(line))
+     for(const amount of v)options.push({amount,score:10,index:i});
  }
- const amount=(high.length?high[high.length-1]:(fallback.length?Math.max(...fallback):''));
- let iso=new Date().toLocaleDateString('en-CA');
- const match=text.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/);
- if(match){let y=Number(match[3]);if(y<100)y+=2000;const d=Number(match[1]),m=Number(match[2]);const dt=new Date(y,m-1,d);if(dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===d)iso=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
- return {merchant,amount,date:iso,category:categoryFor(merchant,text)};
+ const labelled=options.filter(x=>x.score>=55).sort((a,b)=>b.score-a.score||b.index-a.index);
+ if(labelled.length)return {amount:labelled[0].amount,reliable:labelled[0].score>=90};
+ const unique=[...new Set(options.filter(x=>x.score===10).map(x=>x.amount))];
+ if(unique.length===1)return {amount:unique[0],reliable:false};
+ // Guessing the highest item price is worse than asking the user to confirm.
+ return {amount:'',reliable:false};
+}
+function detectReceiptDate(text) {
+ const valid=(year,month,day)=>{
+   const dt=new Date(Date.UTC(year,month-1,day));
+   return Number.isFinite(dt.getTime())&&year>=2000&&year<=2100&&
+     dt.getUTCFullYear()===year&&dt.getUTCMonth()===month-1&&dt.getUTCDate()===day?
+     String(year)+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0'):'';
+ };
+ const iso=String(text||'').match(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+ if(iso){const parsed=valid(Number(iso[1]),Number(iso[2]),Number(iso[3]));if(parsed)return parsed;}
+ const numeric=String(text||'').match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](20\d{2}|\d{2})\b/);
+ if(numeric){
+   const a=Number(numeric[1]),b=Number(numeric[2]);
+   let y=Number(numeric[3]);if(y<100)y+=2000;
+   if(a>12&&b<=12)return valid(y,b,a);
+   if(b>12&&a<=12)return valid(y,a,b);
+   // A date like 04/05/2026 is ambiguous internationally.
+   return '';
+ }
+ const monthNames={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+ const name='(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+ const dmy=new RegExp('\\b(\\d{1,2})[\\s\\-]+('+name+')[,\\s\\-]+(20\\d{2})\\b','i').exec(text);
+ if(dmy)return valid(Number(dmy[3]),monthNames[dmy[2].slice(0,3).toLowerCase()],Number(dmy[1]));
+ const mdy=new RegExp('\\b('+name+')[\\s\\-]+(\\d{1,2})[,\\s\\-]+(20\\d{2})\\b','i').exec(text);
+ if(mdy)return valid(Number(mdy[3]),monthNames[mdy[1].slice(0,3).toLowerCase()],Number(mdy[2]));
+ return '';
+}
+async function enlargedReceiptHeader(file) {
+ let bitmap=null, img=null, objectUrl=null;
+ try{
+   if(typeof createImageBitmap==='function'){
+     try{bitmap=await createImageBitmap(file);}catch(e){bitmap=null;}
+   }
+   if(!bitmap){
+     objectUrl=URL.createObjectURL(file);
+     img=await new Promise((resolve,reject)=>{
+       const element=new Image();
+       element.onload=()=>resolve(element);
+       element.onerror=()=>reject(new Error('Could not load photo'));
+       element.src=objectUrl;
+     });
+   }
+   const source=bitmap||img, w=source.width||source.naturalWidth,h=source.height||source.naturalHeight;
+   if(!w||!h)return null;
+   // First 38% of the receipt, enlarged to detect its brand heading.
+   const cut=Math.max(1,Math.round(h*0.38));
+   const scale=Math.min(2.5,2000/w,1100/cut);
+   const canvas=document.createElement('canvas');
+   canvas.width=Math.max(1,Math.round(w*scale));
+   canvas.height=Math.max(1,Math.round(cut*scale));
+   const ctx=canvas.getContext('2d');
+   if(!ctx)return null;
+   ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+   ctx.filter='grayscale(1) contrast(1.5)';
+   ctx.drawImage(source,0,0,w,cut,0,0,canvas.width,canvas.height);
+   return canvas;
+ }finally{
+   if(bitmap&&typeof bitmap.close==='function')bitmap.close();
+   if(objectUrl)URL.revokeObjectURL(objectUrl);
+ }
+}
+function parseReceipt(text,ocrData,headerData) {
+ const lines=String(text||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+ const merchant=detectedMerchant(text,ocrData,headerData);
+ const total=receiptAmount(lines);
+ const detectedDate=detectReceiptDate(text);
+ const currency=/\$\s*\d/.test(text)||/\bUSD\b/i.test(text)?'USD':
+   /€\s*\d/.test(text)||/\bEUR\b/i.test(text)?'EUR':'GBP';
+ const notes=[];
+ if(!merchant)notes.push('Could not identify the merchant; please enter the shop name.');
+ if(!total.reliable)notes.push(total.amount===''?
+   'No reliable total found; enter the amount shown on your receipt.':
+   'Total may be inaccurate; check the amount carefully.');
+ if(!detectedDate)notes.push('Date could not be confirmed; select the receipt date manually.');
+ if(currency!=='GBP')notes.push(
+   'This receipt appears to use '+currency+'. The dashboard uses pounds (£); check or convert the amount before saving.'
+ );
+ if(ocrData&&Number.isFinite(ocrData.confidence)&&ocrData.confidence<60)
+   notes.push('OCR confidence was low; verify all detected details.');
+ return {merchant,amount:total.amount,date:detectedDate,
+   category:categoryFor(merchant,text),currency,notes};
 }
 $('scan').onclick=async()=>{
  const file=$('photo').files[0];if(!file){$('status').textContent='Select a receipt image first.';return;}
- $('scan').disabled=true;$('status').textContent='Reading text... first use downloads OCR language data.';
+ $('scan').disabled=true;
+ $('review').style.display='none';
+ $('status').textContent='Reading the full receipt...';
  let worker;
  try{
    worker=await Tesseract.createWorker('eng');
-   const result=await worker.recognize(file, {}, {blocks:true});
+   const result=await worker.recognize(file,{}, {blocks:true});
    const text=result.data.text||'';
-   if(!text.trim())throw new Error('No readable text was detected. Try a clearer photo.');
-   const r=parseReceipt(text,result.data);
-   $('status').textContent='Checking the business and category...';
-   const researched=await researchMerchantCategory(r.merchant);
-   if(researched)r.category=researched;
-   $('merchant-note').textContent=r.merchant?
-     'Detected merchant: '+r.merchant+'. Category suggested using '+(researched?'a matched public business description.':'the shop name and receipt items.')+' Please verify both fields.':
-     'Could not identify the merchant. Please enter its name and select a category.';
-   $('merchant').value=r.merchant;$('amount').value=r.amount;$('date').value=r.date;$('category').value=r.category;
-   $('raw').textContent=text;$('review').style.display='block';
-   $('status').textContent='Text extracted! Please review the values below.';
- }catch(err){$('status').textContent='Could not read receipt: '+err.message;}
+   $('status').textContent='Checking the largest text at the top...';
+   let header=null;
+   try{
+     const headerImage=await enlargedReceiptHeader(file);
+     if(headerImage)header=(await worker.recognize(headerImage,{}, {blocks:true})).data;
+   }catch(err){console.warn('Header-only OCR unavailable; using full receipt',err);}
+   if(!text.trim()&&!(header&&header.text&&header.text.trim()))
+     throw new Error('No readable text detected. Try a sharper, well-lit photo.');
+   const r=parseReceipt(text||header.text,result.data,header);
+   $('status').textContent='Checking the merchant and category...';
+   // An online business match is only a fallback. It must not overwrite a
+   // stronger match from the shop name and actual purchased products.
+   if(r.category==='Other'&&r.merchant){
+     const researched=await researchMerchantCategory(r.merchant);
+     if(researched)r.category=researched;
+   }
+   $('merchant').value=r.merchant;
+   $('amount').value=r.amount;
+   $('date').value=r.date;
+   $('category').value=r.category;
+   $('raw').textContent=(text||'')+
+     (header&&header.text?'\n\n--- Enlarged top-of-receipt OCR ---\n'+header.text:'');
+   $('merchant-note').textContent='Suggested merchant: '+(r.merchant||'not identified')+
+     '. Category: '+r.category+'. Verify these against the receipt before saving.';
+   $('scan-warnings').textContent=r.notes.join(' ');
+   $('review').style.display='block';
+   $('status').textContent='Scan complete. Review the shop, total, date and category below.';
+ }catch(err){$('status').textContent='Could not scan receipt: '+err.message;}
  finally{if(worker)await worker.terminate();$('scan').disabled=false;}
 };
+
 // Save the original photo in IndexedDB and a smaller backup in localStorage.
 // Older text-only scanner transactions stay in localStorage and remain readable.
 const DB_NAME = 'receiptly_receipt_library_v1';
