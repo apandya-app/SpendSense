@@ -66,6 +66,7 @@ body.library-mode .back-to-scan{display:inline-block}
 <label>Total (£)<input id="amount" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
 <label>Date<input id="date" type="date"></label>
 <label>Category<select id="category"><option>Groceries</option><option>Restaurants</option><option>Transport</option><option>Shopping</option><option>Entertainment</option><option>Healthcare</option><option>Other</option></select></label>
+<p class="muted note" id="merchant-note" aria-live="polite"></p>
 <button id="save">Save receipt &amp; transaction</button>
 <p class="muted" style="font-size:13px">Your receipt photo will be saved in the category you choose.</p>
 <details><summary>See recognised text</summary><pre id="raw" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>
@@ -117,7 +118,7 @@ function categoryFor(merchant, receiptText) {
  // Consider both the shop name and the products actually purchased.
  // These rules work offline after OCR and require no paid service.
  const lines=String(receiptText||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
- const shopContext=[String(merchant||''),...lines.slice(0,5)].join(' ');
+ const shopContext=String(merchant||'');
  const itemLines=lines.slice(1).filter(s=>
    /[a-z]{2}/i.test(s) &&
    !/\b(?:sub\s*total|grand\s*total|total|vat|tax|change|cash|card|debit|credit|balance|tendered|discount|savings|approved|payment|thank you|receipt number|invoice|telephone|customer|transaction id)\b/i.test(s) &&
@@ -152,18 +153,97 @@ function categoryFor(merchant, receiptText) {
  };
  let best='Other',bestScore=0;
  for(const [category,rule] of Object.entries(rules)){
-   let score=rule.shop.test(shopContext)?7:0;
+   let score=rule.shop.test(shopContext)?12:0;
    // Multiple product lines can outweigh a merchant's general business type.
    let hits=0;
    for(const line of itemLines)if(rule.item.test(line))hits++;
-   score+=3*Math.min(hits,7);
+   score+=2*Math.min(hits,4);
    if(score>bestScore){bestScore=score;best=category;}
  }
  return best;
 }
-function parseReceipt(text){
+
+function isNonMerchantLine(input){
+ const s=String(input||'').trim();
+ if(!s||s.length>75||!/[a-z]{3}/i.test(s))return true;
+ if(/^(?:receipt|invoice|welcome|thank you|order|transaction|cashier|subtotal|total|payment|balance|date|time|customer|tel|phone|fax|vat|tax)\b/i.test(s))return true;
+ if(/(?:https?:\/\/|www\.|@|\b(?:postcode|zip code|email)\b)/i.test(s))return true;
+ if(/^\d{1,6}\s+.*\b(?:street|st\.?|road|rd\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|lane|ln\.?|way|square|place|court)\b/i.test(s))return true;
+ if(/\b(?:MA|NY|CA|TX|FL)\s+\d{5}(?:-\d{4})?\b/.test(s))return true;
+ if(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(s))return true;
+ if(/^(?:\+?\d[\d\s\-().]{7,}|[\d\s.,£$-]+)$/.test(s))return true;
+ if(/\b(?:total|subtotal|invoice|transaction|cash|debit|credit|card|item count)\b/i.test(s))return true;
+ return false;
+}
+function detectedMerchant(text,ocrData){
+ const plain=String(text||'').split(/\r?\n/).map(name=>name.trim()).filter(Boolean);
+ const boxes=[];
+ for(const block of (ocrData&&Array.isArray(ocrData.blocks)?ocrData.blocks:[])){
+  for(const paragraph of (block.paragraphs||[])){
+   for(const line of (paragraph.lines||[])){
+    const name=String(line.text||(line.words||[]).map(w=>w.text||'').join(' ')).trim();
+    const bb=line.bbox||{};
+    if(name)boxes.push({name,top:Number.isFinite(bb.y0)?bb.y0:null,bottom:Number.isFinite(bb.y1)?bb.y1:null});
+   }
+  }
+ }
+ if(boxes.length>1 && boxes.every(x=>x.top!==null))boxes.sort((a,b)=>a.top-b.top);
+ const lines=boxes.length?boxes:plain.map(name=>({name,top:null,bottom:null}));
+ const heights=lines.filter(x=>x.top!==null&&x.bottom>x.top).map(x=>x.bottom-x.top).sort((a,b)=>a-b);
+ const typical=heights.length?heights[Math.floor(heights.length/2)]:0;
+ let best=null;
+ lines.slice(0,Math.min(16,lines.length)).forEach((line,i)=>{
+  const name=line.name.replace(/^(?:welcome to|thank you for shopping at)\s+/i,'').trim();
+  if(isNonMerchantLine(name))return;
+  let score=10-i*.9;
+  if(name.split(/\s+/).length>=2)score++;
+  if(/\b(?:gift[\s-]*sh[o0]p|souvenir|store|shop|supermarket|grocer|cafe|coffee|restaurant|pharmacy|bookstore|boutique|market)\b/i.test(name))score+=6;
+  if(typical&&line.top!==null&&line.bottom>line.top)score+=Math.max(-2,Math.min(5,((line.bottom-line.top)/typical-1)*5));
+  if(name.length>52)score-=4;
+  if(/\d/.test(name))score-=2;
+  if(!best||score>best.score)best={name,score,index:i};
+ });
+ if(!best)return '';
+ if(/^(?:gift[\s-]*sh[o0]p|souvenir shop|bookstore|campus store)$/i.test(best.name)&&best.index>0){
+  const preceding=lines[best.index-1].name.trim();
+  if(!isNonMerchantLine(preceding)&&preceding.length<=35)return preceding+' '+best.name;
+ }
+ return best.name;
+}
+async function researchMerchantCategory(merchant){
+ // Query by business name only; never transmit receipt photo or item list.
+ const name=String(merchant||'').replace(/\s+/g,' ').trim();
+ if(!name||name.length>75||isNonMerchantLine(name))return null;
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),2400);
+ try{
+  const url='https://www.wikidata.org/w/api.php?'+new URLSearchParams({
+   action:'wbsearchentities',search:name,language:'en',limit:'5',format:'json',origin:'*'
+  }).toString();
+  const response=await fetch(url,{signal:controller.signal,credentials:'omit'});
+  if(!response.ok)return null;
+  const result=await response.json();
+  const normalize=s=>String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+  const wanted=normalize(name);
+  for(const item of (Array.isArray(result.search)?result.search:[])){
+   const aliases=Array.isArray(item.aliases)?item.aliases:[];
+   const alternatives=[item.label,item.match&&item.match.text,...aliases.map(a=>typeof a==='string'?a:a.value)];
+   if(!alternatives.some(x=>normalize(x)===wanted))continue;
+   const description=String(item.description||'').toLowerCase();
+   if(/\b(?:supermarket|grocery|groceries|food retailer|convenience store)\b/.test(description))return 'Groceries';
+   if(/\b(?:restaurant|coffeehouse|coffee shop|cafeteria|fast food|bakery|cafe)\b/.test(description))return 'Restaurants';
+   if(/\b(?:pharmacy|drugstore|healthcare provider)\b/.test(description))return 'Healthcare';
+   if(/\b(?:airline|railway|transportation|transport operator|taxi|bus operator|transit)\b/.test(description))return 'Transport';
+   if(/\b(?:cinema|movie theater|streaming service|video game|entertainment company)\b/.test(description))return 'Entertainment';
+   if(/\b(?:retailer|retail chain|department store|clothing|apparel|fashion|bookstore|bookshop|souvenir|gift shop|merchandise|furnishings|electronics store)\b/.test(description))return 'Shopping';
+  }
+ }catch(e){console.info('Merchant search unavailable; using receipt clues.');}
+ finally{clearTimeout(timer);}
+ return null;
+}
+function parseReceipt(text,ocrData){
  const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
- const merchant=lines.find(x=>/[a-z]{3,}/i.test(x) && !/receipt|invoice|welcome|tel:|www\.|http|vat no/i.test(x))||'';
+ const merchant=detectedMerchant(text,ocrData);
  const money=/(?:£\s*)?(\d{1,6}[.,]\d{2})\b/g;
  const high=[],fallback=[];
  for(const line of lines){
@@ -184,10 +264,16 @@ $('scan').onclick=async()=>{
  let worker;
  try{
    worker=await Tesseract.createWorker('eng');
-   const result=await worker.recognize(file);
+   const result=await worker.recognize(file, {}, {blocks:true});
    const text=result.data.text||'';
    if(!text.trim())throw new Error('No readable text was detected. Try a clearer photo.');
-   const r=parseReceipt(text);
+   const r=parseReceipt(text,result.data);
+   $('status').textContent='Checking the business and category...';
+   const researched=await researchMerchantCategory(r.merchant);
+   if(researched)r.category=researched;
+   $('merchant-note').textContent=r.merchant?
+     'Detected merchant: '+r.merchant+'. Category suggested using '+(researched?'a matched public business description.':'the shop name and receipt items.')+' Please verify both fields.':
+     'Could not identify the merchant. Please enter its name and select a category.';
    $('merchant').value=r.merchant;$('amount').value=r.amount;$('date').value=r.date;$('category').value=r.category;
    $('raw').textContent=text;$('review').style.display='block';
    $('status').textContent='Text extracted! Please review the values below.';
