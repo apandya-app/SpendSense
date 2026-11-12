@@ -6,6 +6,12 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
 :root{font-family:system-ui,-apple-system,sans-serif;color:#14362b;background:#f5faf6}*{box-sizing:border-box}body{margin:0}main{max-width:680px;margin:auto;padding:22px}h1{margin-bottom:0}small,.muted{color:#60776c}.card{background:white;border-radius:18px;padding:18px;margin:18px 0;box-shadow:0 2px 12px #14362b0b}label{display:block;font-size:14px;margin-top:12px;font-weight:600}input,select,button{font:inherit}input:not([type=file]),select{display:block;width:100%;padding:10px;border:1px solid #b9d1c4;border-radius:9px;margin-top:5px}button{background:#207b51;color:white;border:0;border-radius:10px;padding:12px 16px;cursor:pointer;margin-top:12px}button:disabled{opacity:.55;cursor:wait}button.secondary{background:#ddf2e5;color:#14362b}#preview{max-width:100%;max-height:270px;object-fit:contain;border-radius:12px;display:none;margin:12px auto}#review{display:none}.line{display:flex;justify-content:space-between;border-bottom:1px solid #e6eee8;padding:11px 0;gap:12px}.line span:last-child{font-weight:700}#status{font-size:14px;color:#207b51}.warning{font-size:13px;color:#8c4b25}
+#photo.file-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%)}
+label.upload-zone{display:flex;flex-direction:column;align-items:center;gap:10px;justify-content:center;margin-top:14px;padding:28px 18px;background:#f5faf6;border:2px dashed #91c6a8;border-radius:17px;text-align:center;cursor:pointer;transition:background .2s,border-color .2s}
+label.upload-zone:hover{background:#e8f7ee;border-color:#207b51}#photo:focus-visible+label.upload-zone{outline:3px solid #207b51;outline-offset:3px}
+.upload-zone strong{font-size:18px;color:#14362b}.upload-zone .muted{font-size:13px;font-weight:400}
+.choose-file{display:inline-block;background:#207b51;color:white;border-radius:10px;padding:11px 22px;font-size:14px;font-weight:600;margin-top:2px}
+.file-name{margin:8px 0 0;font-size:13px;color:#207b51;overflow-wrap:anywhere}
 </style>
 </head>
 <body><main>
@@ -13,7 +19,14 @@
 <section class="card">
 <h2>Scan a receipt</h2>
 <p class="muted">Select a clear photo of a receipt. Text recognition runs in this browser, with no receipt-analysis API key.</p>
-<label for="photo">Receipt photo (PNG or JPG)</label><input id="photo" type="file" accept="image/*">
+<input id="photo" class="file-input" type="file" accept="image/*">
+<label for="photo" class="upload-zone">
+<svg class="upload-symbol" width="45" height="45" viewBox="0 0 24 24" fill="none" stroke="#207b51" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V3m0 0-5 5m5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+<strong>Upload receipt image</strong>
+<span class="muted">Select a clear JPG or PNG receipt photo</span>
+<span class="choose-file">Choose file</span>
+</label>
+<p id="selected-file" class="file-name" aria-live="polite"></p>
 <img id="preview" alt="Selected receipt preview">
 <button id="scan">Read receipt</button>
 <p id="status" role="status">Choose an image to begin.</p>
@@ -38,6 +51,7 @@ let imgUrl=null;
 $('photo').addEventListener('change',()=>{
  if(imgUrl) URL.revokeObjectURL(imgUrl);
  const file=$('photo').files[0];
+ $('selected-file').textContent=file?'Selected: '+file.name:'';
  $('review').style.display='none';
  if(!file){$('preview').style.display='none';return;}
  if(!file.type.startsWith('image/')){$('status').textContent='Please choose an image.';return;}
@@ -102,6 +116,6 @@ function render(){
  left.append(name,meta);const right=document.createElement('span');right.textContent='£'+Number(r.amount).toFixed(2);
  line.append(left,right);$('history').append(line);});
 }
-$('clear').onclick=()=>{if(confirm('Delete saved demo transactions from this browser?')){rows=[];localStorage.removeItem(key);render();}};
+$('clear').onclick=()=>{if(confirm('Delete all saved scanner transactions from this browser?')){rows=[];localStorage.removeItem(key);render();}};
 render();
 </script></body></html>

@@ -26,9 +26,6 @@ async def main(page: ft.Page):
     import json
     prefs = ft.SharedPreferences()
     STORAGE_KEY = "receiptly.transactions.v1"
-    demo = True
-
-
     async def save_transactions():
         data = [
             {**t, "date": t["date"].isoformat()}
@@ -37,8 +34,11 @@ async def main(page: ft.Page):
         return await prefs.set(STORAGE_KEY, json.dumps(data))
 
     async def load_transactions():
-        nonlocal demo
-        saved = await prefs.get(STORAGE_KEY)
+        try:
+            saved = await prefs.get(STORAGE_KEY)
+        except Exception as err:
+            print("Unable to read saved transactions:", err)
+            return
         if saved is None:
             return
         try:
@@ -49,24 +49,14 @@ async def main(page: ft.Page):
             ]
             transactions.clear()
             transactions.extend(restored)
-            demo = False
         except (ValueError, TypeError, KeyError):
             print("Could not restore saved transactions")
 
 
     today = date.today()
-    transactions = [
-        {"merchant": "Tesco", "amount": 23.40, "category": "Groceries", "date": today},
-        {"merchant": "Cafe", "amount": 8.90, "category": "Restaurants", "date": today - timedelta(days=1)},
-        {"merchant": "Train ticket", "amount": 12.50, "category": "Transport", "date": today - timedelta(days=3)},
-        {"merchant": "Bookshop", "amount": 18.00, "category": "Shopping", "date": today - timedelta(days=8)},
-        {"merchant": "Cinema", "amount": 11.99, "category": "Entertainment", "date": today - timedelta(days=20)},
-        {"merchant": "Pharmacy", "amount": 7.20, "category": "Healthcare", "date": today - timedelta(days=42)},
-    ]
-
+    transactions = []
     screen = "Home"
     period = "Month"
-    demo = True
 
     def txt(value, size=15, color=DARK, bold=False):
         return ft.Text(str(value), size=size, color=color,
@@ -106,20 +96,54 @@ async def main(page: ft.Page):
         period = name
         render()
 
-    async def clear_sample(e):
-        nonlocal demo
-        if demo:
-            transactions.clear()
-            demo = False
-            render()
+    def show_storage_error():
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text("Could not save changes"),
+            content=ft.Text("Receiptly could not write to this device's storage. Please try again."),
+            actions=[ft.TextButton("OK", on_click=lambda e: page.pop_dialog())]
+        ))
 
     def remove_transaction(item):
         async def action(e):
-            nonlocal demo
-            transactions.remove(item)
-            demo = False
+            index = transactions.index(item)
+            transactions.pop(index)
+            try:
+                await save_transactions()
+            except Exception as err:
+                transactions.insert(index, item)
+                print("Transaction deletion failed:", err)
+                show_storage_error()
             render()
         return action
+
+    async def remove_all_confirmed(e):
+        try:
+            await prefs.set(STORAGE_KEY, "[]")
+        except Exception as err:
+            print("Clear-all failed:", err)
+            page.pop_dialog()
+            show_storage_error()
+            return
+        transactions.clear()
+        page.pop_dialog()
+        render()
+
+    def confirm_remove_all(e):
+        if not transactions:
+            return
+        page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Remove all transactions?"),
+            content=ft.Text(
+                "This deletes all transactions saved in the main Receiptly dashboard on this device. "
+                "It does not delete receipts stored separately in the scanner. This cannot be undone."
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
+                ft.Button("Remove all", bgcolor="#C62828", color=WHITE, on_click=remove_all_confirmed),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
 
     def row_for(item, show_delete=False):
         left = ft.Column(controls=[
@@ -219,7 +243,6 @@ async def main(page: ft.Page):
         feedback = txt("", 12, GREEN)
 
         async def save(e):
-            nonlocal demo
             name = (merchant.value or "").strip()
             try:
                 cost = round(float((amount.value or "").strip()), 2)
@@ -233,13 +256,18 @@ async def main(page: ft.Page):
                 page.update()
                 return
 
-            if demo:
-                transactions.clear()
-            transactions.append({"merchant": name, "amount": cost,
-                                 "category": category.value or "Other", "date": today})
-            demo = False
+            item = {"merchant": name, "amount": cost,
+                    "category": category.value or "Other", "date": today}
+            transactions.append(item)
+            try:
+                await save_transactions()
+            except Exception as err:
+                transactions.remove(item)
+                print("Transaction save failed:", err)
+                feedback.value = "Could not save the transaction. Please try again."
+                page.update()
+                return
             switch("Home")
-            await save_transactions()
 
         return [
             heading("Add a transaction", "Log spending manually"),
@@ -352,15 +380,12 @@ async def main(page: ft.Page):
             ])
         ]
 
-        if demo:
-            controls.append(ft.Container(
-                content=ft.Row(controls=[
-                    ft.Text("Demo transactions — not your real spending",
-                            color=DARK, size=11, expand=True),
-                    ft.TextButton("Clear", on_click=clear_sample),
-                ]),
-                bgcolor=MINT, border_radius=10, padding=6,
-            ))
+        if screen in ("Home", "History"):
+            controls.append(ft.Row(controls=[
+                ft.Container(expand=True),
+                ft.Button("Remove all transactions", bgcolor="#C62828", color=WHITE,
+                          disabled=not transactions, on_click=confirm_remove_all),
+            ]))
 
         controls.extend(sections[screen]())
 
@@ -382,11 +407,6 @@ async def main(page: ft.Page):
 
     await load_transactions()
     render()
-
-
-if __name__ == "__main__":
-    ft.run(main)
-
 
 
 if __name__ == "__main__":
