@@ -1,5 +1,7 @@
 import flet as ft
 import flet_webview as fwv
+import base64
+import mimetypes
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -21,7 +23,9 @@ async def main(page: ft.Page):
     page.bgcolor = BG
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
-    page.scroll = ft.ScrollMode.AUTO
+    page.scroll = None
+    file_picker = ft.FilePicker()
+    page.services.append(file_picker)
 
     import json
     prefs = ft.SharedPreferences()
@@ -181,12 +185,25 @@ async def main(page: ft.Page):
         return result or [txt("No spending recorded for this period.", 13, MUTED)]
 
     def period_buttons():
-        return ft.Row(controls=[
-            ft.Button(p, on_click=lambda e, x=p: choose_period(x),
-                      bgcolor=GREEN if p == period else MINT,
-                      color=WHITE if p == period else DARK)
-            for p in ["Day", "Week", "Month", "Year"]
-        ], spacing=5, wrap=True)
+        # Compact filters that remain on one line on a narrow Android screen.
+        return ft.Row(
+            spacing=4,
+            wrap=False,
+            controls=[
+                ft.Button(
+                    p,
+                    expand=True,
+                    on_click=lambda e, x=p: choose_period(x),
+                    bgcolor=GREEN if p == period else MINT,
+                    color=WHITE if p == period else DARK,
+                    style=ft.ButtonStyle(
+                        padding=ft.Padding.symmetric(horizontal=3, vertical=9),
+                        text_style=ft.TextStyle(size=12),
+                    ),
+                )
+                for p in ("Day", "Week", "Month", "Year")
+            ],
+        )
 
     def home():
         rows = filtered()
@@ -198,14 +215,33 @@ async def main(page: ft.Page):
                 txt("Snap. Track. Save.", 15, WHITE),
                 txt("Scan your receipt", 24, WHITE, True),
                 txt("Upload a receipt or add an expense manually.", 12, WHITE),
-                ft.Row(controls=[
-                    ft.Button("Scan receipt", on_click=lambda e: switch("Receipt"),
-                              bgcolor=WHITE, color=GREEN),
-                    ft.Button("Add manually", on_click=lambda e: switch("Scan"),
-                              bgcolor=MINT, color=DARK),
-                    ft.Button("My receipts", on_click=lambda e: switch("Library"),
-                              bgcolor=WHITE, color=GREEN),
-                ], wrap=True),
+                ft.Row(
+                    spacing=5,
+                    wrap=False,
+                    controls=[
+                        ft.Button("Scan", expand=True,
+                                  on_click=lambda e: switch("Receipt"),
+                                  bgcolor=WHITE, color=GREEN,
+                                  style=ft.ButtonStyle(
+                                      padding=ft.Padding.symmetric(horizontal=4, vertical=9),
+                                      text_style=ft.TextStyle(size=12),
+                                  )),
+                        ft.Button("Add", expand=True,
+                                  on_click=lambda e: switch("Scan"),
+                                  bgcolor=MINT, color=DARK,
+                                  style=ft.ButtonStyle(
+                                      padding=ft.Padding.symmetric(horizontal=4, vertical=9),
+                                      text_style=ft.TextStyle(size=12),
+                                  )),
+                        ft.Button("My receipts", expand=True,
+                                  on_click=lambda e: switch("Library"),
+                                  bgcolor=WHITE, color=GREEN,
+                                  style=ft.ButtonStyle(
+                                      padding=ft.Padding.symmetric(horizontal=2, vertical=9),
+                                      text_style=ft.TextStyle(size=11),
+                                  )),
+                    ],
+                ),
                 color=GREEN,
             ),
             period_buttons(),
@@ -281,18 +317,104 @@ async def main(page: ft.Page):
         ]
 
     def receipt_scanner():
+        # Android WebView does not always open the HTML file input.
+        # Use Flet's native picker, then pass the photo to the existing OCR page.
+        scanner_view = fwv.WebView(url=SCANNER_URL, expand=True)
+        selection_status = txt("Choose an image from your phone.", 12, MUTED)
+
+        async def choose_image(e):
+            selection_status.value = "Opening your phone's photo picker..."
+            page.update()
+            try:
+                selected_files = await file_picker.pick_files(
+                    allow_multiple=False,
+                    file_type=ft.FilePickerFileType.IMAGE,
+                    with_data=True,
+                    compression_quality=70,
+                )
+                if not selected_files:
+                    selection_status.value = "No image selected."
+                    page.update()
+                    return
+
+                selected = selected_files[0]
+                image_bytes = selected.bytes
+                if not image_bytes:
+                    raise ValueError("The selected photo could not be read.")
+                if len(image_bytes) > 5 * 1024 * 1024:
+                    raise ValueError(
+                        "That photo is too large. Please try one under 5 MB."
+                    )
+
+                mime = mimetypes.guess_type(selected.name)[0] or "image/jpeg"
+                if mime not in ("image/jpeg", "image/png", "image/webp"):
+                    raise ValueError(
+                        "Please choose a JPG, PNG or WebP photo."
+                    )
+
+                encoded = base64.b64encode(image_bytes).decode("ascii")
+                # Flet's Android WebView supports running JavaScript in
+                # the currently loaded receipt-scanner.html page.
+                script = """
+                (() => {
+                  const encoded = __IMAGE_BYTES_JSON__;
+                  const name = __IMAGE_NAME_JSON__;
+                  const mime = __IMAGE_MIME_JSON__;
+                  const input = document.getElementById('photo');
+                  if (!input) throw new Error('Scanner is not ready.');
+                  const binary = atob(encoded);
+                  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+                  const file = new File([bytes], name, {type: mime});
+                  const transfer = new DataTransfer();
+                  transfer.items.add(file);
+                  input.files = transfer.files;
+                  input.dispatchEvent(new Event('change', {bubbles: true}));
+                })();
+                """
+                script = (
+                    script.replace("__IMAGE_BYTES_JSON__", json.dumps(encoded))
+                    .replace("__IMAGE_NAME_JSON__", json.dumps(selected.name))
+                    .replace("__IMAGE_MIME_JSON__", json.dumps(mime))
+                )
+                await scanner_view.run_javascript(script)
+                selection_status.value = (
+                    "Image selected. Tap 'Read receipt' below to scan it."
+                )
+            except Exception as err:
+                print("Native receipt picker failed:", err)
+                selection_status.value = (
+                    "Could not select that image: " + str(err)
+                )
+            page.update()
+
         return [
-            heading("Scan your receipt", "Upload an image and check the extracted details"),
-            txt("Scanned records are saved in the scanner on this device, separately "
-                "from your main dashboard.", 12, MUTED),
-            ft.Button("My saved receipts", on_click=lambda e: switch("Library"),
-                      bgcolor=MINT, color=DARK),
-            ft.Container(
-                content=fwv.WebView(url=SCANNER_URL, expand=True),
-                height=650, bgcolor=WHITE, border_radius=12,
+            heading("Scan your receipt", "Choose an image from your Android phone"),
+            ft.Button(
+                "Choose photo from phone",
+                icon=ft.Icons.FOLDER_OPEN,
+                bgcolor=GREEN,
+                color=WHITE,
+                on_click=choose_image,
             ),
-            ft.Button("Enter a transaction manually", on_click=lambda e: switch("Scan"),
-                      bgcolor=MINT, color=DARK),
+            selection_status,
+            ft.Container(
+                content=scanner_view,
+                height=650,
+                bgcolor=WHITE,
+                border_radius=12,
+            ),
+            ft.Button(
+                "My saved receipts",
+                on_click=lambda e: switch("Library"),
+                bgcolor=MINT,
+                color=DARK,
+            ),
+            ft.Button(
+                "Enter a transaction manually",
+                on_click=lambda e: switch("Scan"),
+                bgcolor=MINT,
+                color=DARK,
+            ),
         ]
 
     def receipt_library():
@@ -400,7 +522,7 @@ async def main(page: ft.Page):
             ])
         ]
 
-        if screen in ("Home", "History"):
+        if screen == "History":
             controls.append(ft.Row(controls=[
                 ft.Container(expand=True),
                 ft.Button("Remove all transactions", bgcolor="#C62828", color=WHITE,
@@ -409,20 +531,65 @@ async def main(page: ft.Page):
 
         controls.extend(sections[screen]())
 
-        nav = ft.Row(controls=[
-            ft.Button(name, on_click=lambda e, x=name: switch(x),
-                      bgcolor=GREEN if screen == name else WHITE,
-                      color=WHITE if screen == name else DARK)
-            for name in ["Home", "Receipt", "History", "Stats"]
-        ], spacing=5, wrap=True, alignment=ft.MainAxisAlignment.CENTER)
+        nav = ft.Row(
+            controls=[
+                ft.Button(
+                    label,
+                    expand=True,
+                    on_click=lambda e, x=destination: switch(x),
+                    bgcolor=GREEN if screen == destination else WHITE,
+                    color=WHITE if screen == destination else DARK,
+                    style=ft.ButtonStyle(
+                        padding=ft.Padding.symmetric(horizontal=2, vertical=9),
+                        text_style=ft.TextStyle(size=11),
+                    ),
+                )
+                for label, destination in (
+                    ("Home", "Home"),
+                    ("Scan", "Receipt"),
+                    ("History", "History"),
+                    ("Stats", "Stats"),
+                )
+            ],
+            spacing=4,
+            wrap=False,
+            alignment=ft.MainAxisAlignment.CENTER,
+        )
 
+        # Only the main content scrolls; the navigation stays at the bottom.
         page.clean()
-        page.scroll = ft.ScrollMode.AUTO
-        page.add(ft.SafeArea(content=ft.Column(controls=[
-            ft.Container(content=ft.Column(controls=controls, spacing=16), padding=18),
-            ft.Container(content=nav, bgcolor=WHITE, padding=10),
-        ], spacing=0)))
-       
+        page.scroll = None
+        page.add(
+            ft.SafeArea(
+                expand=True,
+                content=ft.Column(
+                    expand=True,
+                    spacing=0,
+                    controls=[
+                        ft.Column(
+                            expand=True,
+                            scroll=ft.ScrollMode.AUTO,
+                            controls=[
+                                ft.Container(
+                                    content=ft.Column(
+                                        controls=controls,
+                                        spacing=16,
+                                    ),
+                                    padding=14,
+                                )
+                            ],
+                        ),
+                        ft.Container(
+                            content=nav,
+                            bgcolor=WHITE,
+                            padding=ft.Padding.symmetric(
+                                horizontal=8, vertical=7
+                            ),
+                        ),
+                    ],
+                ),
+            )
+        )
         page.update()
 
     await load_transactions()
