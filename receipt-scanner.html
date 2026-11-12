@@ -155,10 +155,11 @@ $('scan').onclick=async()=>{
  }catch(err){$('status').textContent='Could not read receipt: '+err.message;}
  finally{if(worker)await worker.terminate();$('scan').disabled=false;}
 };
-// A separate image library: IndexedDB stores the photo and its transaction in one record.
+// Save the original photo in IndexedDB and a smaller backup in localStorage.
 // Older text-only scanner transactions stay in localStorage and remain readable.
 const DB_NAME = 'receiptly_receipt_library_v1';
 const DB_STORE = 'receipts';
+const IMAGE_BACKUP_PREFIX = 'receiptly_photo_backup_v2_';
 const CATEGORIES = ['Groceries','Restaurants','Transport','Shopping','Entertainment','Healthcare','Other'];
 let libraryRecords = [];
 let thumbUrls = [];
@@ -192,6 +193,72 @@ async function libraryOperation(mode,makeRequest) {
   tx.onerror=()=>reject(tx.error||new Error('Could not access saved receipts.'));
   tx.onabort=()=>reject(tx.error||new Error('Receipt save was cancelled.'));
  });
+}
+function readPhotoBackups(){
+ const result = [];
+ try{
+  for(let i=0;i<localStorage.length;i++){
+   const k=localStorage.key(i);
+   if(!k||!k.startsWith(IMAGE_BACKUP_PREFIX))continue;
+   try{
+    const item=JSON.parse(localStorage.getItem(k)||'null');
+    if(item && item.id && typeof item.imageData==='string' &&
+       /^data:image\/(jpeg|png|webp);base64,/.test(item.imageData)){
+      result.push(item);
+    }
+   }catch(err){console.warn('Skipping unreadable photo backup',err);}
+  }
+ }catch(err){console.warn('Cannot read photo backups',err);}
+ return result;
+}
+// Reduce file size for a second, reload-safe copy. Original photo remains in IndexedDB.
+async function makePhotoBackup(file){
+ if(!file||!file.type.startsWith('image/'))throw new Error('Select an image.');
+ const image=await new Promise((resolve,reject)=>{
+  const img=new Image();
+  const source=URL.createObjectURL(file);
+  img.onload=()=>{URL.revokeObjectURL(source);resolve(img);};
+  img.onerror=()=>{URL.revokeObjectURL(source);reject(new Error('The receipt image could not be opened.'));};
+  img.src=source;
+ });
+ const maxW=1300,maxH=2100;
+ const initial=Math.min(1,maxW/image.naturalWidth,maxH/image.naturalHeight);
+ if(!Number.isFinite(initial)||initial<=0)throw new Error('Invalid image size.');
+ const canvas=document.createElement('canvas');
+ const ctx=canvas.getContext('2d');
+ if(!ctx)throw new Error('Image compression is unavailable.');
+ let scale=initial, imageData='';
+ for(let attempt=0;attempt<5;attempt++){
+  canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(image,0,0,canvas.width,canvas.height);
+  imageData=canvas.toDataURL('image/jpeg',attempt<2?.78:.68);
+  if(imageData.length<700000)break; // around 500 KB of encoded data
+  scale*=.78;
+ }
+ return imageData;
+}
+function backupReceiptPhoto(record,imageData){
+ if(!imageData)return false;
+ const backup={id:record.id,merchant:record.merchant,amount:record.amount,
+  date:record.date,category:record.category,savedAt:record.savedAt,imageData};
+ try{
+  localStorage.setItem(IMAGE_BACKUP_PREFIX+record.id,JSON.stringify(backup));
+  return true;
+ }catch(err){
+  console.warn('Receipt backup storage is full or unavailable',err);
+  return false;
+ }
+}
+function photoSource(receipt){
+ if(receipt.photo instanceof Blob && receipt.photo.size>0){
+  const url=URL.createObjectURL(receipt.photo);
+  return {url,objectUrl:true,type:receipt.photo.type};
+ }
+ if(typeof receipt.imageData==='string' && receipt.imageData.startsWith('data:image/'))
+  return {url:receipt.imageData,objectUrl:false,type:'image/jpeg'};
+ return null;
 }
 function renderHistory(){
  const all=[...libraryRecords.map(r=>({...r,hasPhoto:true})),...rows.map(r=>({...r,hasPhoto:false}))];
@@ -231,7 +298,10 @@ function renderLibrary(){
   entries.forEach(receipt=>{
    const tile=document.createElement('button');tile.className='receipt-tile';tile.type='button';
    const img=document.createElement('img');img.alt='Photo of receipt from '+receipt.merchant;
-   const url=URL.createObjectURL(receipt.photo);thumbUrls.push(url);img.src=url;
+   const src=photoSource(receipt);
+   if(!src)return;
+   if(src.objectUrl)thumbUrls.push(src.url);
+   img.src=src.url;
    const merchant=document.createElement('strong');merchant.textContent=receipt.merchant;
    const detail=document.createElement('span');detail.className='muted';
    detail.textContent=receipt.date+' · £'+Number(receipt.amount).toFixed(2);
@@ -256,20 +326,49 @@ function openPhoto(id){
  if(!receipt)return;
  closePhoto();
  activePhotoId=id;
- viewerUrl=URL.createObjectURL(receipt.photo);
+ const src=photoSource(receipt);
+ if(!src)return;
+ viewerUrl=src.objectUrl?src.url:null;
  $('viewer-title').textContent=receipt.merchant;
  $('viewer-meta').textContent=receipt.category+' · '+receipt.date+' · £'+Number(receipt.amount).toFixed(2);
- $('viewer-image').src=viewerUrl;
- $('download-photo').href=viewerUrl;
- $('download-photo').download='receipt-'+receipt.date+'.'+(receipt.photo.type==='image/png'?'png':'jpg');
+ $('viewer-image').src=src.url;
+ $('download-photo').href=src.url;
+ $('download-photo').download='receipt-'+receipt.date+'.'+(src.type==='image/png'?'png':'jpg');
  $('photo-viewer').hidden=false;
  $('close-photo').focus();
 }
 async function refreshLibrary(){
- libraryRecords=await libraryOperation('readonly',store=>store.getAll());
+ let stored=[],readError=null;
+ try{stored=await libraryOperation('readonly',store=>store.getAll());}
+ catch(err){readError=err;console.warn('Photo database could not be read',err);}
+ const backedUp=readPhotoBackups();
+ const index=new Map(backedUp.map(r=>[r.id,r]));
+ for(const original of stored){
+  const backup=index.get(original.id);
+  // Prefer the original photo, and recover from the backup if the blob is missing.
+  index.set(original.id,{
+   ...backup,...original,
+   imageData:backup?.imageData || original.imageData || '',
+  });
+ }
+ libraryRecords=Array.from(index.values()).filter(r=>photoSourceAvailable(r));
  libraryRecords.sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
  renderHistory();
  renderLibrary();
+ if(readError && !backedUp.length)throw readError;
+ if(readError && backedUp.length){
+  $('library-status').textContent='Showing locally backed-up photos. Original photo storage is unavailable here.';
+ }
+ // Back up older photos from previous app versions when they're still accessible.
+ for(const item of stored){
+  if(!item.photo || item.imageData || backedUp.some(b=>b.id===item.id))continue;
+  try{const compressed=await makePhotoBackup(item.photo);backupReceiptPhoto(item,compressed);}
+  catch(err){console.warn('Could not back up a previous receipt',err);}
+ }
+}
+function photoSourceAvailable(item){
+ return (item.photo instanceof Blob && item.photo.size>0) ||
+  (typeof item.imageData==='string' && /^data:image\//.test(item.imageData));
 }
 $('library-filter').addEventListener('change',renderLibrary);
 $('close-photo').onclick=closePhoto;
@@ -281,7 +380,16 @@ $('confirm-delete').onclick=async()=>{
  if(!activePhotoId)return;
  $('confirm-delete').disabled=true;
  try{
-  await libraryOperation('readwrite',store=>store.delete(activePhotoId));
+  const id=activePhotoId;
+  const found=libraryRecords.find(r=>r.id===id);
+  if(found && found.photo){
+   await libraryOperation('readwrite',store=>store.delete(id));
+  }else{
+   // Backup-only records can still be removed if IndexedDB was unavailable.
+   try{await libraryOperation('readwrite',store=>store.delete(id));}
+   catch(err){console.warn('Original receipt database unavailable',err);}
+  }
+  localStorage.removeItem(IMAGE_BACKUP_PREFIX+id);
   closePhoto();
   await refreshLibrary();
   $('library-status').textContent='Receipt removed from this device.';
@@ -302,18 +410,32 @@ $('save').onclick=async()=>{
   merchant,amount:Math.round(amount*100)/100,date,category,
   photo:file,savedAt:new Date().toISOString()
  };
+ let originalSaved=false, backupSaved=false,failReason='';
  try{
   await libraryOperation('readwrite',store=>store.put(record));
-  await refreshLibrary();
-  $('status').textContent='All saved! Your photo is in My receipt library under '+category+'.';
-  $('review').style.display='none';
-  $('photo').value='';$('selected-file').textContent='';
-  if(imgUrl){URL.revokeObjectURL(imgUrl);imgUrl=null;}
-  $('preview').removeAttribute('src');$('preview').style.display='none';
- }catch(err){
+  // Check the database actually returns the photo, not only its transaction text.
+  const checked=await libraryOperation('readonly',store=>store.get(record.id));
+  originalSaved=Boolean(checked && checked.photo instanceof Blob && checked.photo.size>0);
+ }catch(err){failReason=err.message||String(err);console.warn('Original receipt could not be saved',err);}
+ try{
+  const compressed=await makePhotoBackup(file);
+  backupSaved=backupReceiptPhoto(record,compressed);
+ }catch(err){console.warn('Could not make a receipt image backup',err);}
+ if(!originalSaved && !backupSaved){
   $('save').disabled=false;
-  $('status').textContent='Could not save this receipt. Please try again: '+err.message;
+  $('status').textContent='Could not store the receipt photo. Please try again. '+failReason;
+  return;
  }
+ try{await refreshLibrary();}
+ catch(err){console.warn('Could not refresh receipt library',err);}
+ $('status').textContent=backupSaved?
+  'Your receipt photo is saved! Find it in My receipt library under '+category+'.':
+  'Receipt saved in photo storage, but the extra backup is unavailable. Download a copy to be safe.';
+ $('review').style.display='none';
+ $('photo').value='';$('selected-file').textContent='';
+ if(imgUrl){URL.revokeObjectURL(imgUrl);imgUrl=null;}
+ $('preview').removeAttribute('src');$('preview').style.display='none';
+ $('save').disabled=false;
 };
 $('clear').onclick=()=>{
  if(confirm('Remove older scanner transactions without photos? Your photo library will not be affected.')){
