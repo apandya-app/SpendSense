@@ -377,10 +377,16 @@ async def main(page: ft.Page):
             ft.Container(content=ft.Column(controls=controls, spacing=16), padding=18),
             ft.Container(content=nav, bgcolor=WHITE, padding=10),
         ], spacing=0)))
+       
         page.update()
 
-        await load_transactions()
-        render()
+    await load_transactions()
+    render()
+
+
+if __name__ == "__main__":
+    ft.run(main)
+
 
 
 if __name__ == "__main__":
