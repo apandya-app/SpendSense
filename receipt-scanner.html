@@ -4,6 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Receiptly Receipt Scanner</title>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="receiptly-ai-config.js"></script>
 <style>
 :root{font-family:system-ui,-apple-system,sans-serif;color:#14362b;background:#f5faf6}*{box-sizing:border-box}body{margin:0}main{max-width:680px;margin:auto;padding:22px}h1{margin-bottom:0}small,.muted{color:#60776c}.card{background:white;border-radius:18px;padding:18px;margin:18px 0;box-shadow:0 2px 12px #14362b0b}label{display:block;font-size:14px;margin-top:12px;font-weight:600}input,select,button{font:inherit}input:not([type=file]),select{display:block;width:100%;padding:10px;border:1px solid #b9d1c4;border-radius:9px;margin-top:5px}button{background:#207b51;color:white;border:0;border-radius:10px;padding:12px 16px;cursor:pointer;margin-top:12px}button:disabled{opacity:.55;cursor:wait}button.secondary{background:#ddf2e5;color:#14362b}#preview{max-width:100%;max-height:270px;object-fit:contain;border-radius:12px;display:none;margin:12px auto}#review{display:none}.line{display:flex;justify-content:space-between;border-bottom:1px solid #e6eee8;padding:11px 0;gap:12px}.line span:last-child{font-weight:700}#status{font-size:14px;color:#207b51}.warning{font-size:13px;color:#8c4b25}
 #photo.file-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%)}
@@ -56,6 +57,10 @@ body.library-mode .back-to-scan{display:inline-block}
 </label>
 <p id="selected-file" class="file-name" aria-live="polite"></p>
 <img id="preview" alt="Selected receipt preview">
+<div id="ai-option" class="card" hidden style="margin:10px 0;padding:12px;background:#eef8f1">
+<label style="display:flex;align-items:flex-start;gap:10px"><input id="use-ai" type="checkbox" style="margin-top:3px"><span>Use AI receipt reading (optional)<small style="display:block">Your receipt photo is sent to OpenAI via our secure server. Uncheck to scan with your original OCR.</small></span></label>
+<div id="ai-security" hidden style="margin-top:12px"><small>Complete verification to use online AI:</small><div id="turnstile-slot"></div></div>
+</div>
 <button id="scan">Read receipt</button> <a class="library-link" href="#receipt-library">My saved receipts</a>
 <p id="status" role="status">Choose an image to begin.</p>
 </section>
@@ -389,11 +394,103 @@ function parseReceipt(text,ocrData,headerData) {
  return {merchant,amount:total.amount,date:detectedDate,
    category:categoryFor(merchant,text),currency,notes};
 }
+
+// Optional AI vision scanner; activated only after secure backend configuration.
+const aiSettings=window.RECEIPTLY_AI||{};
+const aiConfigured=Boolean(
+  /^https:\/\/[a-zA-Z0-9.-]+(?:\/[a-zA-Z0-9/_-]+)?\/scan$/.test(aiSettings.endpoint||'') &&
+  /^[a-zA-Z0-9_-]{8,}$/.test(aiSettings.siteKey||'')
+);
+let turnstileId=null;
+$('ai-option').hidden=!aiConfigured;
+function setAiSecurity(){
+  $('ai-security').hidden=!$('use-ai').checked;
+  if(!$('use-ai').checked||turnstileId!==null)return;
+  const slot=$('turnstile-slot');
+  if(!window.turnstile){slot.textContent='Security check is loading. Please try again in a moment.';return;}
+  slot.replaceChildren();
+  turnstileId=window.turnstile.render(slot,{sitekey:aiSettings.siteKey,theme:'light'});
+}
+$('use-ai').addEventListener('change',setAiSecurity);
+window.receiptlyTurnstileReady=()=>{
+  if($('use-ai').checked)setAiSecurity();
+};
+if(aiConfigured){
+  const captchaScript=document.createElement('script');
+  captchaScript.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=receiptlyTurnstileReady';
+  captchaScript.async=true;captchaScript.defer=true;
+  document.head.append(captchaScript);
+}
+async function fileDataUrl(file){
+  if(!file||!['image/jpeg','image/png','image/webp'].includes(file.type))
+    throw new Error('AI requires a JPG, PNG or WebP receipt photo.');
+  if(file.size>5*1024*1024)throw new Error('AI receipt limit is 5 MB. Use the original scanner for larger photos.');
+  return await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result||''));
+    reader.onerror=()=>reject(new Error('Could not read the selected photo.'));
+    reader.readAsDataURL(file);
+  });
+}
+async function scanWithOpenAI(file){
+  if(!aiConfigured)throw new Error('AI scanner has not been configured.');
+  if(!window.turnstile||turnstileId===null)
+    throw new Error('Security verification not ready.');
+  const token=window.turnstile.getResponse(turnstileId);
+  if(!token)throw new Error('Please complete the security check above.');
+  const image=await fileDataUrl(file);
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),25000);
+  try{
+    const response=await fetch(aiSettings.endpoint,{
+      method:'POST',mode:'cors',credentials:'omit',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({image,turnstileToken:token}),signal:controller.signal
+    });
+    let result;
+    try{result=await response.json();}catch{throw new Error('Unexpected AI service response.');}
+    if(!response.ok)throw new Error(result.error||'AI service is temporarily unavailable.');
+    if(!result||typeof result!=='object')throw new Error('Invalid AI result.');
+    $('merchant').value=typeof result.merchant==='string'?result.merchant:'';
+    $('amount').value=typeof result.amount==='number'?String(result.amount):'';
+    $('date').value=typeof result.date==='string'?result.date:'';
+    $('category').value=CATEGORIES.includes(result.category)?result.category:'Other';
+    $('raw').textContent='AI suggested items:\n'+
+      (Array.isArray(result.items)?result.items.join('\n'):'(none)')+
+      '\n\nAI receipt extraction is probabilistic; verify every field.';
+    const warnings=Array.isArray(result.notes)?result.notes:[];
+    if(result.currency!=='GBP')warnings.push('Currency is '+(result.currency||'unknown')+
+      '. Receiptly stores £ amounts; check and convert before saving.');
+    $('merchant-note').textContent='AI-assisted suggestion. Confirm the merchant and category before saving.';
+    $('scan-warnings').textContent=warnings.join(' ');
+    $('review').style.display='block';
+    $('status').textContent='AI scan complete. Review and correct the details before saving.';
+  } finally {
+    clearTimeout(timer);
+    // Turnstile tokens are single-use; require a fresh verification for next scan.
+    if(window.turnstile&&turnstileId!==null)window.turnstile.reset(turnstileId);
+  }
+}
+
 $('scan').onclick=async()=>{
  const file=$('photo').files[0];if(!file){$('status').textContent='Select a receipt image first.';return;}
  $('scan').disabled=true;
  $('review').style.display='none';
- $('status').textContent='Reading the full receipt...';
+ $('status').textContent='Reading the receipt...';
+ if(aiConfigured&&$('use-ai').checked){
+   try{
+     await scanWithOpenAI(file);
+   }catch(err){
+     $('status').textContent='AI scan unavailable ('+err.message+'). Using the original scanner instead...';
+     console.warn('AI receipt reader fallback:',err);
+     $('scan-warnings').textContent='AI was unavailable; using original OCR. Please verify all fields.';
+   }
+   if($('review').style.display==='block'){
+     $('scan').disabled=false;
+     return;
+   }
+ }
+ $('status').textContent='Reading the full receipt with original OCR...';
  let worker;
  try{
    worker=await Tesseract.createWorker('eng');
