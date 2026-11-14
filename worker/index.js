@@ -17,7 +17,7 @@ export default {
     if (origin !== ORIGIN) return response({error:"Origin not allowed."},403);
     const path = new URL(request.url).pathname;
     if (path !== "/scan") return response({error:"Not found."},404);
-    if (request.method === "OPTIONS") return response({},204);
+    if (request.method === "OPTIONS") return new Response(null, {status:204, headers: {"Access-Control-Allow-Origin":ORIGIN,"Access-Control-Allow-Methods":"POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type","Vary":"Origin"}});
     if (request.method !== "POST") return response({error:"POST required."},405);
     if (!env.OPENAI_API_KEY || !env.TURNSTILE_SECRET_KEY || !env.RECEIPT_RATE_LIMIT)
       return response({error:"AI scanner backend is not configured."},503);
