@@ -1,0 +1,12 @@
+name = "receiptly-ai-scanner"
+main = "index.js"
+compatibility_date = "2026-11-01"
+
+# The approximate per-location limiter protects the AI service from simple bursts.
+# Configure an OpenAI API project budget/usage limit as a separate safeguard.
+[[ratelimits]]
+name = "RECEIPT_RATE_LIMIT"
+namespace_id = "1001"
+[ratelimits.simple]
+limit = 5
+period = 60
